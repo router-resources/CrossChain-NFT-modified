@@ -7,23 +7,27 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-
-// 0x0D4BaC9e0D2909Ef4A6a9f82D80f3788893a8E2d
-// 0x4F59537B891526aD8C2dA7555514b853A58E275a
 /// @title XERC721
-/// @author Yashika Goyal
+/// @author Yashika Goyal and Pranav Verma
 /// @notice A cross-chain ERC-721 smart contract to demonstrate how one can create
 /// cross-chain NFT contracts using Router CrossTalk.
 contract XERC721 is ERC721,ERC721URIStorage,IDapp {
   // address of the owner
   address public owner;
 
+ // name of the chain
+  string public ChainName;
+
   // address of the gateway contract
   IGateway public gatewayContract;
+
+  // chain id corresponding to chain name
   mapping(string=>string) public name;
-  // chain type + chain id => address of our contract in bytes
+
+  // set contract on source and destination chain
   mapping(string => string) public ourContractOnChains;
 
+  // gateway address corresponding to chain name
   mapping(string=>address) public gateway;
 
   // transfer params struct where we specify which NFT should be transferred to
@@ -34,24 +38,30 @@ contract XERC721 is ERC721,ERC721URIStorage,IDapp {
     string uri;
   }
 
+  struct TransferTemp{
+    uint256 nftId;
+    string uri;
+  }
 
-// 0x000000000007a12000000006fc23ac0000000000000000000000000000000000000000000000000000000000000000000000
+
 
   constructor(
     string memory chainName,
     uint256 id,
     string memory uri
-  ) ERC721("ERC721", "ERC721") {
-    name["Mumbai"]="80001";
-    name["Fuji"]="43113";
-    gateway["Mumbai"]=0xcAa6223D0d41FB27d6FC81428779751317FC24cB;
-    gateway["Fuji"]=0xcAa6223D0d41FB27d6FC81428779751317FC24cB;
+  ) ERC721("MyNFT", "NFT") {
+    name["mumbai"]="80001";
+    name["fuji"]="43113";
+    gateway["mumbai"]=0xcAa6223D0d41FB27d6FC81428779751317FC24cB;
+    gateway["fuji"]=0xcAa6223D0d41FB27d6FC81428779751317FC24cB;
+    ChainName=chainName;
     address  gatewayAddress=gateway[chainName];
     gatewayContract = IGateway(gatewayAddress);
     owner = msg.sender;
-    safeMint(msg.sender,id,uri);
-  
+
+    // setting metadata for dapp
     gatewayContract.setDappMetadata("0xFc4b8E4A5E208fb1D50B3914fff9eb258315b60B");
+    safeMint(msg.sender,id,uri);
     
   }
 
@@ -71,7 +81,9 @@ contract XERC721 is ERC721,ERC721URIStorage,IDapp {
 
 function safeMint(address to, uint256 tokenId, string memory uri) public 
     {
-      // require(msg.sender == owner, "only owner");
+      require(msg.sender == gateway["mumbai"] || (keccak256(abi.encodePacked(ChainName)) == keccak256(abi.encodePacked("fuji")) && msg.sender == owner), "not allowed");
+
+
         _safeMint(to, tokenId);
         _setTokenURI(tokenId, uri);
     }
@@ -85,6 +97,7 @@ function safeMint(address to, uint256 tokenId, string memory uri) public
     }
   function mint(address to, uint256 tokenId,string memory uri) external {
     require(msg.sender == owner, "only owner");
+    require(keccak256(abi.encodePacked(ChainName)) == keccak256(abi.encodePacked("fuji")));
         _safeMint(to, tokenId);
         _setTokenURI(tokenId, uri);
   }
@@ -104,10 +117,11 @@ function safeMint(address to, uint256 tokenId, string memory uri) public
         super._burn(tokenId);
     }
   
+  // This function sends the NFT from the source chain to the destination chain 
   function transferCrossChain(
     string calldata chainName,
-    TransferParams calldata transferParams
-    // bytes calldata requestMetadata
+   TransferTemp calldata transferTemp
+   
   ) public payable {
     require(
       keccak256(bytes(ourContractOnChains[name[chainName]])) !=
@@ -116,10 +130,14 @@ function safeMint(address to, uint256 tokenId, string memory uri) public
     );
 
     require(
-      _ownerOf(transferParams.nftId) == msg.sender,
+      _ownerOf(transferTemp.nftId) == msg.sender,
       "caller is not the owner"
     );
 
+    TransferParams memory transferParams;
+    transferParams.nftId=transferTemp.nftId;
+    transferParams.recipient=toBytes(msg.sender);
+    transferParams.uri=transferTemp.uri;
     // burning the NFT from the address of the user calling _burn function
     _burn(transferParams.nftId);
     string memory destChainId=name[chainName];
@@ -164,6 +182,16 @@ function safeMint(address to, uint256 tokenId, string memory uri) public
     );
     return requestMetadata;
   }
+
+  function toBytes(address a) public pure returns (bytes memory b){
+    assembly {
+        let m := mload(0x40)
+        a := and(a, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)
+        mstore(add(m, 20), xor(0x140000000000000000000000000000000000000000, a))
+        mstore(0x40, add(m, 52))
+        b := m
+   }
+}
 
   /// @notice function to handle the cross-chain request received from some other chain.
   /// @param requestSender address of the contract on source chain that initiated the request.
